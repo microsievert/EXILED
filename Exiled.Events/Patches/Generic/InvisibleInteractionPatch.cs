@@ -8,6 +8,10 @@
 namespace Exiled.Events.Patches.Generic
 {
 #pragma warning disable SA1313
+#pragma warning disable SA1402
+    using System.Collections.Generic;
+    using System.Reflection.Emit;
+
     using Exiled.API.Enums;
     using Exiled.API.Features;
 
@@ -17,6 +21,11 @@ namespace Exiled.Events.Patches.Generic
     using Interactables.Verification;
 
     using UnityEngine;
+
+    using NorthwoodLib.Pools;
+
+    using static HarmonyLib.AccessTools;
+    using CustomPlayerEffects;
 
     /// <summary>
     /// Patches <see cref="StandardDistanceVerification.ServerCanInteract(ReferenceHub, InteractableCollider)"/>.
@@ -45,6 +54,45 @@ namespace Exiled.Events.Patches.Generic
             }
 
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Patches <see cref="PlayerInteract.OnInteract"/> method
+    /// </summary>
+    [HarmonyPatch(typeof(PlayerInteract), nameof(PlayerInteract.OnInteract))]
+    internal static class InvisibleInteractionPatch2
+    {
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator generator)
+        {
+            List<CodeInstruction> newInstructions = ListPool<CodeInstruction>.Shared.Rent(instructions);
+
+            LocalBuilder player = generator.DeclareLocal(typeof(Player));
+
+            Label ret = generator.DefineLabel();
+
+            int offset = -3;
+            int index = newInstructions.FindIndex(i => i.Calls(PropertySetter(typeof(PlayerEffect), nameof(PlayerEffect.Intensity)))) + offset;
+
+            newInstructions.InsertRange(index, new[]
+            {
+                new CodeInstruction(OpCodes.Ldarg_0),
+                new(OpCodes.Ldfld, Field(typeof(PlayerInteract), nameof(PlayerInteract._hub))),
+                new(OpCodes.Call, Method(typeof(Player), nameof(Player.Get), new[] { typeof(ReferenceHub) })),
+                new(OpCodes.Dup),
+                new(OpCodes.Stloc_S, player.LocalIndex),
+                new(OpCodes.Brfalse_S, ret),
+                new(OpCodes.Ldloc_S, player.LocalIndex),
+                new(OpCodes.Callvirt, PropertyGetter(typeof(Player), nameof(Player.InteractionInvisibilityRemove))),
+                new(OpCodes.Brtrue_S, ret),
+            });
+
+            newInstructions[newInstructions.Count - 1].labels.Add(ret);
+
+            for (int z = 0; z < newInstructions.Count; z++)
+                yield return newInstructions[z];
+
+            ListPool<CodeInstruction>.Shared.Return(newInstructions);
         }
     }
 }
